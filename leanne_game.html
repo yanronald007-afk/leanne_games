@@ -1,0 +1,420 @@
+﻿<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Leanne Math's Games</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body { 
+            font-family: 'Comic Sans MS', 'Chalkboard SE', 'Microsoft JhengHei', sans-serif; 
+            background-color: #f0fdf4; 
+            touch-action: manipulation;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .bounce-anim { animation: bounce 0.5s infinite alternate; }
+        @keyframes bounce {
+            from { transform: translateY(0px); }
+            to { transform: translateY(-5px); }
+        }
+        .pop-in { animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+        @keyframes popIn {
+            from { transform: scale(0.8); opacity: 0; }
+            to { transform: scale(1); opacity: 1; }
+        }
+        .cloud-sync { animation: pulse 2s infinite; }
+        @keyframes pulse {
+            0% { opacity: 0.6; }
+            50% { opacity: 1; }
+            100% { opacity: 0.6; }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+
+    <script type="text/babel" data-type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+
+        const { useState, useEffect, useRef } = React;
+
+
+        // --- Firebase 初始化 ---
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        let app, auth, db, appId;
+        try {
+            app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+            appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        } catch (e) {
+            console.error("Firebase init error:", e);
+        }
+
+
+        // --- 輔助函數 ---
+        const randomInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+        const shuffle = (array) => {
+            let currentIndex = array.length, randomIndex;
+            while (currentIndex > 0) {
+                randomIndex = Math.floor(Math.random() * currentIndex);
+                currentIndex--;
+                [array[currentIndex], array[randomIndex]] = [array[randomIndex], array[currentIndex]];
+            }
+            return array;
+        };
+
+
+        // 答案選項生成器（固定為 4 個選項，確保無負數）
+        const generateOptions = (answer, type) => {
+            const options = new Set([answer]);
+            let attempts = 0;
+            
+            const isRemainderFormat = typeof answer === 'string' && answer.includes('...');
+
+
+            while (options.size < 4 && attempts < 300) {
+                let fake;
+                if (isRemainderFormat) {
+                    const parts = answer.split(' ... ').map(Number);
+                    const q = parts[0];
+                    const r = parts[1];
+                    const qOffset = randomInt(-3, 3);
+                    const rOffset = randomInt(-2, 2);
+                    const newQ = Math.max(0, q + qOffset);
+                    const newR = Math.max(0, r + rOffset);
+                    fake = `${newQ} ... ${newR}`;
+                } else {
+                    const numAns = Number(answer);
+                    const sign = Math.random() > 0.5 ? 1 : -1;
+                    if (type === 'calc') {
+                        const errorType = Math.random();
+                        if (errorType < 0.3) fake = numAns + (10 * sign);
+                        else if (errorType < 0.6) fake = numAns + (100 * sign);
+                        else fake = numAns + sign;
+                    } else {
+                        fake = numAns + (randomInt(1, 12) * sign);
+                    }
+                    // 確保非負數
+                    if (fake < 0) fake = Math.abs(fake) + randomInt(1, 5);
+                }
+                
+                if (fake !== undefined && fake !== null && String(fake) !== String(answer)) {
+                    options.add(fake);
+                }
+                attempts++;
+            }
+
+
+            // 兜底方案
+            while (options.size < 4) {
+                if (isRemainderFormat) {
+                    options.add(`${randomInt(1, 20)} ... ${randomInt(0, 4)}`);
+                } else {
+                    options.add(Math.max(1, Number(answer) + randomInt(1, 20)));
+                }
+            }
+
+
+            return shuffle(Array.from(options));
+        };
+
+
+        // --- 題庫生成器 ---
+
+
+        const generateCalcQuestion = (level) => {
+            let a, b, c, answer, text;
+            if (level === 1) { a = randomInt(35, 89); b = randomInt(25, 49); text = `${a} + ${b} = ?`; answer = a + b; }
+            else if (level === 2) { a = randomInt(60, 99); b = randomInt(25, 59); text = `${a} - ${b} = ?`; answer = Math.max(0, a - b); }
+            else if (level === 3) { a = randomInt(180, 880); b = randomInt(30, 90); text = `${a} + ${b} = ?`; answer = a + b; }
+            else if (level === 4) { a = randomInt(201, 905); b = randomInt(20, 150); text = `${a} - ${b} = ?`; answer = Math.max(0, a - b); }
+            else if (level === 5) { a = randomInt(150, 700); b = randomInt(150, 290); text = `${a} + ${b} = ?`; answer = a + b; }
+            else if (level === 6) { a = randomInt(500, 990); b = randomInt(250, 480); text = `${a} - ${b} = ?`; answer = Math.max(0, a - b); }
+            else if (level === 7) { a = randomInt(120, 300); b = randomInt(50, 150); c = randomInt(30, 80); text = `${a} + ${b} - ${c} = ?`; answer = Math.max(0, a + b - c); }
+            else if (level === 8) { answer = randomInt(150, 400); b = randomInt(80, 200); c = answer + b; text = `( ? ) + ${b} = ${c}`; }
+            else if (level === 9) { a = randomInt(1050, 3500); b = randomInt(300, 850); text = `${a} + ${b} = ?`; answer = a + b; }
+            else { a = randomInt(1000, 1500); b = randomInt(250, 850); text = `${a} - ${b} = ?`; answer = Math.max(0, a - b); }
+            return { text, answer, options: generateOptions(answer, 'calc') };
+        };
+
+
+        const generateMultQuestion = (level) => {
+            let a, b, q, r, answer, text;
+            if (level === 1) { a = randomInt(6, 9); b = randomInt(6, 9); text = `${a} × ${b} = ?`; answer = a * b; }
+            else if (level === 2) { a = randomInt(4, 9); answer = randomInt(5, 9); let c = a * answer; text = `${a} × ( ? ) = ${c}`; }
+            else if (level === 3) { b = randomInt(3, 9); answer = randomInt(3, 9); a = b * answer; text = `${a} ÷ ${b} = ?`; }
+            else if (level === 4) { a = randomInt(11, 34); b = 2; text = `${a} × ${b} = ?`; answer = a * b; }
+            else if (level === 5) { a = randomInt(13, 29); b = randomInt(3, 6); text = `${a} × ${b} = ?`; answer = a * b; }
+            else if (level === 6) { b = randomInt(4, 8); answer = randomInt(11, 20); a = b * answer; text = `${a} ÷ ${b} = ?`; }
+            else if (level === 7 || level === 8) { 
+                b = randomInt(3, 9); 
+                q = randomInt(4, 15); 
+                r = randomInt(1, b - 1); 
+                a = b * q + r;
+                text = `${a} ÷ ${b} = ?`; 
+                answer = `${q} ... ${r}`;
+            }
+            else if (level >= 9) {
+                if (Math.random() > 0.5) {
+                    a = randomInt(15, 75); b = randomInt(3, 9);
+                    text = `${a} × ${b} = ?`; answer = a * b;
+                } else {
+                    b = randomInt(4, 9); a = randomInt(35, 140);
+                    q = Math.floor(a / b); r = a % b;
+                    text = `${a} ÷ ${b} = ?`; 
+                    answer = r === 0 ? q : `${q} ... ${r}`;
+                }
+            }
+            return { text, answer, options: generateOptions(answer, 'mult') };
+        };
+
+
+        const generateLifeMathQuestion = (level) => {
+            let a, b, c, answer, text;
+            if (level === 1) { a = randomInt(15, 25); b = randomInt(15, 35); text = `買了 $${a} 筆和 $${b} 簿，付 $100 找回多少元？`; answer = 100 - a - b; }
+            else if (level === 2) { a = randomInt(6, 12); text = `西餅每件 $${a}，買半打需多少元？`; answer = a * 6; }
+            else if (level === 3) { a = randomInt(3, 6); b = randomInt(4, 8); text = `有 ${a} 張 $20 和 ${b} 個 $5，共有多少元？`; answer = a * 20 + b * 5; }
+            else if (level === 4) { a = randomInt(30, 80); text = `紅線 1米20厘米，藍線 ${a}厘米，共長多少厘米？`; answer = 120 + a; }
+            else if (level === 5) { a = randomInt(300, 600); text = `西瓜重 2公斤，切去 ${a}克後，剩多少克？`; answer = 2000 - a; }
+            else if (level === 6) { a = randomInt(25, 45); text = `現在 14:15，網課長 ${a}分鐘，下課是 14時多少分？`; answer = 15 + a; }
+            else if (level === 7) { a = randomInt(18, 25); text = `買 3本 $${a} 的書和一個 $45 筆袋，共付多少元？`; answer = a * 3 + 45; }
+            else if (level === 8) { a = randomInt(8, 12); text = `橙每個 $${a}「買3送1」，拿了 4個需付多少元？`; answer = a * 3; }
+            else if (level === 9) { a = randomInt(5, 8); text = `做一頁練習需 ${a}分鐘，完成 5頁需多少分鐘？`; answer = a * 5; }
+            else { a = randomInt(110, 180); b = randomInt(40, 80); text = `書包 $${a}，水樽 $${b}。付 $500，找回多少元？`; answer = 500 - (a + b); }
+            return { text, answer, options: generateOptions(answer, 'life') };
+        };
+
+
+        // --- 主要 App 組件 ---
+
+
+        const App = () => {
+            const [user, setUser] = useState(null);
+            const [progress, setProgress] = useState({ calc: [], mult: [], life: [] });
+            const [gameState, setGameState] = useState('menu');
+            const [activeGame, setActiveGame] = useState(null);
+            const [activeLevel, setActiveLevel] = useState(1);
+            const [isSyncing, setIsSyncing] = useState(true);
+            
+            const games = [
+                { id: 'calc', title: '加減魔法屋', icon: 'fa-wand-magic-sparkles', color: 'bg-pink-500', desc: '三/四位數及多重運算挑戰' },
+                { id: 'mult', title: '乘除冒險島', icon: 'fa-ship', color: 'bg-blue-500', desc: '進階商餘數與乘除挑戰' },
+                { id: 'life', title: '生活小管家', icon: 'fa-store', color: 'bg-green-500', desc: '時間、貨幣與單位換算難題' }
+            ];
+
+
+            useEffect(() => {
+                if (!auth) return;
+                const initAuth = async () => {
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                };
+                initAuth();
+                return onAuthStateChanged(auth, setUser);
+            }, []);
+
+
+            useEffect(() => {
+                if (!user || !db || !appId) return;
+                const progressRef = doc(db, 'artifacts', appId, 'users', user.uid, 'progress', 'math_p2');
+                return onSnapshot(progressRef, (docSnap) => {
+                    setIsSyncing(false);
+                    if (docSnap.exists()) setProgress(docSnap.data());
+                }, () => setIsSyncing(false));
+            }, [user]);
+
+
+            const saveProgress = async (gameId, level) => {
+                if (!user || !db || !appId) return;
+                const currentArr = progress[gameId] || [];
+                if (!currentArr.includes(level)) {
+                    const newProgress = { ...progress, [gameId]: [...currentArr, level] };
+                    try {
+                        setIsSyncing(true);
+                        await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'progress', 'math_p2'), newProgress, { merge: true });
+                    } catch (e) { console.error(e); setIsSyncing(false); }
+                }
+            };
+
+
+            const handleLevelComplete = () => {
+                saveProgress(activeGame, activeLevel);
+                setGameState('levels');
+            };
+
+
+            return (
+                <div className="min-h-screen flex flex-col items-center py-6 px-4">
+                    <div className="w-full max-w-3xl flex justify-between items-center mb-8">
+                        <h1 className="text-2xl md:text-3xl font-bold text-emerald-800 flex items-center gap-2">
+                            <i className="fa-solid fa-graduation-cap text-emerald-600"></i>
+                            Leanne Math's Games <span className="text-sm bg-orange-100 text-orange-600 px-2 py-1 rounded-md ml-2 border border-orange-200">Band 1 進階版</span>
+                        </h1>
+                        <div className="flex items-center gap-3">
+                            <div className="text-sm font-bold text-gray-500 bg-white px-3 py-1.5 rounded-full shadow-sm">
+                                {isSyncing ? <i className="fa-solid fa-cloud-arrow-up cloud-sync"></i> : <i className="fa-solid fa-cloud-check text-green-500"></i>}
+                            </div>
+                            {gameState !== 'menu' && (
+                                <button onClick={() => setGameState('menu')} className="bg-white text-emerald-700 px-4 py-2 rounded-full shadow-md font-bold">
+                                    <i className="fa-solid fa-house"></i>
+                                </button>
+                            )}
+                        </div>
+                    </div>
+
+
+                    <div className="w-full max-w-3xl flex-1 flex flex-col items-center">
+                        {gameState === 'menu' && <MainMenu games={games} onSelect={(id) => { setActiveGame(id); setGameState('levels'); }} progress={progress} />}
+                        {gameState === 'levels' && <LevelSelect game={games.find(g => g.id === activeGame)} completedLevels={progress[activeGame] || []} onSelect={(lv) => { setActiveLevel(lv); setGameState('playing'); }} />}
+                        {gameState === 'playing' && <GameEngine gameId={activeGame} level={activeLevel} onComplete={handleLevelComplete} onBack={() => setGameState('levels')} />}
+                    </div>
+                </div>
+            );
+        };
+
+
+        const MainMenu = ({ games, onSelect, progress }) => (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full pop-in">
+                {games.map(game => {
+                    const count = (progress[game.id] || []).length;
+                    return (
+                        <div key={game.id} onClick={() => onSelect(game.id)} className="bg-white rounded-3xl shadow-lg p-6 cursor-pointer transform transition hover:-translate-y-2 flex flex-col items-center text-center">
+                            <div className={`w-20 h-20 ${game.color} rounded-full flex items-center justify-center text-white text-3xl mb-4 bounce-anim`}>
+                                <i className={`fa-solid ${game.icon}`}></i>
+                            </div>
+                            <h2 className="text-xl font-bold mb-2">{game.title}</h2>
+                            <p className="text-xs text-gray-400 mb-4">{game.desc}</p>
+                            <div className="w-full bg-gray-100 h-2 rounded-full mb-1">
+                                <div className="bg-yellow-400 h-2 rounded-full" style={{ width: `${count * 10}%` }}></div>
+                            </div>
+                            <span className="text-xs font-bold text-gray-400">{count}/10</span>
+                        </div>
+                    );
+                })}
+            </div>
+        );
+
+
+        const LevelSelect = ({ game, completedLevels, onSelect }) => (
+            <div className="bg-white rounded-3xl shadow-xl w-full p-6 pop-in border-t-8 border-emerald-400">
+                <h2 className="text-2xl font-bold mb-6 text-center">{game.title} - 關卡選擇</h2>
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+                    {Array.from({ length: 10 }, (_, i) => i + 1).map(level => (
+                        <button key={level} onClick={() => onSelect(level)} className={`relative py-6 rounded-2xl text-xl font-bold border-b-4 ${completedLevels.includes(level) ? 'bg-yellow-50 border-yellow-200 text-yellow-700' : 'bg-gray-50 border-gray-200'}`}>
+                            {level} {completedLevels.includes(level) && <i className="fa-solid fa-star absolute -top-2 -right-2 text-yellow-400"></i>}
+                        </button>
+                    ))}
+                </div>
+            </div>
+        );
+
+
+        const GameEngine = ({ gameId, level, onComplete, onBack }) => {
+            const [questionData, setQuestionData] = useState(null);
+            const [score, setScore] = useState(0);
+            const [feedback, setFeedback] = useState(null);
+            const [selectedOpt, setSelectedOpt] = useState(null);
+            const target = 5;
+
+
+            const load = () => {
+                let q;
+                if (gameId === 'calc') q = generateCalcQuestion(level);
+                else if (gameId === 'mult') q = generateMultQuestion(level);
+                else q = generateLifeMathQuestion(level);
+                setQuestionData(q);
+                setFeedback(null);
+                setSelectedOpt(null);
+            };
+
+
+            useEffect(load, [gameId, level]);
+
+
+            const handle = (opt) => {
+                if (feedback) return;
+                setSelectedOpt(opt);
+                if (String(opt) === String(questionData.answer)) {
+                    setFeedback({ type: 'success' });
+                    setTimeout(() => { if (score + 1 >= target) setScore(target); else { setScore(s => s + 1); load(); } }, 1000);
+                } else {
+                    setFeedback({ type: 'error', correct: questionData.answer });
+                    setTimeout(load, 2500);
+                }
+            };
+
+
+            if (score >= target) return (
+                <div className="bg-white rounded-3xl p-10 text-center shadow-xl pop-in">
+                    <div className="text-7xl mb-4 text-yellow-400">🏆</div>
+                    <h2 className="text-3xl font-bold text-emerald-600 mb-6">太棒了！過關了！</h2>
+                    <button onClick={onComplete} className="bg-emerald-500 text-white px-8 py-4 rounded-full font-bold text-xl shadow-lg hover:bg-emerald-600 transition-colors">
+                        返回關卡清單
+                    </button>
+                </div>
+            );
+
+
+            if (!questionData) return null;
+
+
+            return (
+                <div className="bg-white rounded-3xl shadow-xl w-full max-w-2xl p-6 pop-in flex flex-col items-center">
+                    <div className="w-full flex justify-between items-center mb-6">
+                        <button onClick={onBack} className="text-gray-400 flex items-center gap-1"><i className="fa-solid fa-chevron-left"></i> 返回</button>
+                        <div className="bg-emerald-50 px-4 py-1 rounded-full text-emerald-700 font-bold border border-emerald-100">
+                            第 {level} 關 • 進度 {score}/{target}
+                        </div>
+                    </div>
+                    <div className={`w-full p-8 rounded-2xl text-center mb-8 border-2 transition-all ${
+                        feedback?.type === 'success' ? 'bg-green-50 border-green-200 scale-105' : 
+                        feedback?.type === 'error' ? 'bg-red-50 border-red-200' : 'bg-blue-50 border-blue-100'
+                    }`}>
+                        <h3 className="text-3xl md:text-5xl font-bold text-gray-800 tracking-wider mb-2">{questionData.text}</h3>
+                        {feedback?.type === 'error' && (
+                            <div className="mt-4 p-2 bg-white rounded-lg inline-block border border-red-100">
+                                <span className="text-red-500 font-bold">正確答案是: </span>
+                                <span className="text-2xl text-emerald-600 font-black">{feedback.correct}</span>
+                            </div>
+                        )}
+                    </div>
+                    <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {questionData.options.map((o, i) => (
+                            <button 
+                                key={i} 
+                                onClick={() => handle(o)} 
+                                disabled={!!feedback} 
+                                className={`py-6 text-2xl md:text-3xl font-bold rounded-2xl border-4 transition-all duration-200 active:scale-95 ${
+                                    feedback && String(o) === String(questionData.answer) 
+                                        ? 'bg-green-500 border-green-600 text-white shadow-inner' 
+                                        : (selectedOpt === o && String(o) !== String(questionData.answer) 
+                                            ? 'bg-red-400 border-red-500 text-white line-through shadow-inner' 
+                                            : 'bg-white border-gray-100 text-gray-700 hover:border-emerald-300 hover:bg-emerald-50 shadow-sm')
+                                }`}
+                            >
+                                {o}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>
